@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -u
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+usage() {
+    cat <<'EOF'
+Linux Tools
+
+Usage: linux-tools <command> [options]
+
+Commands:
+  disk       Analyze disk usage
+  backup     Create, list, or restore backups
+  watch      Monitor the system
+EOF
+}
+
+case "${1:-}" in
+    disk)
+        shift
+        exec "$SCRIPT_DIR/disk-doctor" "$@"
+        ;;
+    backup)
+        shift
+        exec "$SCRIPT_DIR/backup-it" "$@"
+        ;;
+    watch)
+        shift
+        exec "$SCRIPT_DIR/linux-watch" "$@"
+        ;;
+    --help|-h|'')
+        usage
+        ;;
+    *)
+        printf 'Unknown command: %s\n\n' "$1" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

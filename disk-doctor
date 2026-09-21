@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+
+set -u
+
+TARGET="${1:-/}"
+TOP_COUNT=10
+
+usage() {
+    cat <<'EOF'
+Usage: disk-doctor [path]
+
+Inspect disk usage for a mounted path. Defaults to /.
+EOF
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        printf 'Error: %s is required.\n' "$1" >&2
+        exit 1
+    }
+}
+
+print_header() {
+    printf '\n=== DISK DOCTOR ===\n\n'
+}
+
+show_disk_summary() {
+    local disk_line
+    disk_line=$(df -hP "$TARGET" | awk 'NR == 2 { print }')
+
+    printf 'Path: %s\n' "$TARGET"
+    printf 'Disk: %s\n' "$(awk '{ print $1 }' <<<"$disk_line")"
+    printf 'Used: %s\n' "$(awk '{ print $5 }' <<<"$disk_line")"
+    printf 'Free: %s\n\n' "$(awk '{ print $4 }' <<<"$disk_line")"
+}
+
+largest_directories() {
+    printf '\nLargest directories in %s:\n' "$TARGET"
+    du -xhd 1 "$TARGET" 2>/dev/null | sort -hr | head -n "$TOP_COUNT"
+}
+
+largest_files() {
+    printf '\nLargest files in %s:\n' "$TARGET"
+    find "$TARGET" -xdev -type f -printf '%s\t%p\n' 2>/dev/null |
+        sort -nr |
+        head -n "$TOP_COUNT" |
+        numfmt --field=1 --to=iec
+}
+
+old_files() {
+    printf '\nFiles not modified in the last 180 days:\n'
+    find "$TARGET" -xdev -type f -mtime +180 -printf '%TY-%Tm-%Td  %p\n' 2>/dev/null |
+        head -n "$TOP_COUNT"
+}
+
+show_cache() {
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+
+    if [[ -d "$cache_dir" ]]; then
+        printf '\nCache usage:\n'
+        du -sh "$cache_dir" 2>/dev/null
+    else
+        printf '\nNo user cache directory found.\n'
+    fi
+}
+
+show_docker() {
+    if command -v docker >/dev/null 2>&1; then
+        printf '\nDocker usage:\n'
+        docker system df
+    else
+        printf '\nDocker is not installed.\n'
+    fi
+}
+
+menu() {
+    local choice
+
+    while true; do
+        cat <<'EOF'
+
+What do you want to investigate?
+1) Largest directories
+2) Largest files
+3) Old files
+4) Cache
+5) Docker
+6) Everything
+q) Quit
+EOF
+        read -r -p '> ' choice
+
+        case "$choice" in
+            1) largest_directories ;;
+            2) largest_files ;;
+            3) old_files ;;
+            4) show_cache ;;
+            5) show_docker ;;
+            6)
+                largest_directories
+                largest_files
+                old_files
+                show_cache
+                show_docker
+                ;;
+            q|Q) break ;;
+            *) printf 'Choose 1-6 or q.\n' ;;
+        esac
+    done
+}
+
+case "${1:-}" in
+    --help|-h)
+        usage
+        exit 0
+        ;;
+esac
+
+[[ -d "$TARGET" ]] || {
+    printf 'Error: %s is not a directory.\n' "$TARGET" >&2
+    exit 1
+}
+
+require_command df
+require_command du
+require_command find
+require_command numfmt
+
+print_header
+show_disk_summary
+menu

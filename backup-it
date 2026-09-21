@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+set -u
+
+BACKUP_ROOT="${BACKUP_ROOT:-$HOME/backups}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  backup-it <source-directory>
+  backup-it --list
+  backup-it --restore <snapshot> <destination-directory>
+
+Environment:
+  BACKUP_ROOT  Where snapshots are stored (default: ~/backups)
+EOF
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        printf 'Error: %s is required.\n' "$1" >&2
+        exit 1
+    }
+}
+
+list_snapshots() {
+    if [[ ! -d "$BACKUP_ROOT" ]] || [[ -z "$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]]; then
+        printf 'No snapshots found in %s\n' "$BACKUP_ROOT"
+        return
+    fi
+
+    printf 'Available snapshots:\n\n'
+    find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r | nl -w2 -s'  '
+}
+
+create_backup() {
+    local source=$1
+    local source_name snapshot_name snapshot_dir temp_dir archive
+
+    [[ -d "$source" ]] || {
+        printf 'Error: %s is not a directory.\n' "$source" >&2
+        exit 1
+    }
+
+    source=$(cd "$source" && pwd)
+    source_name=$(basename "$source")
+    snapshot_name="$(date +%F_%H-%M-%S)_$source_name"
+    snapshot_dir="$BACKUP_ROOT/$snapshot_name"
+    temp_dir=$(mktemp -d)
+    archive="$temp_dir/$snapshot_name.tar.gz"
+
+    trap 'rm -rf "$temp_dir"' EXIT
+
+    printf '\n=== BACKUP-IT ===\n\n'
+    printf 'Source:      %s\n' "$source"
+    printf 'Destination: %s\n\n' "$snapshot_dir"
+    printf 'Creating snapshot...\n'
+
+    tar -C "$(dirname "$source")" -czf "$archive" "$source_name"
+    mkdir -p "$snapshot_dir"
+    mv "$archive" "$snapshot_dir/backup.tar.gz"
+    printf '%s\n' "$source" > "$snapshot_dir/source.txt"
+
+    printf '\nBackup completed\n'
+    printf 'Snapshot: %s\n' "$snapshot_name"
+    printf 'Size:     %s\n' "$(du -h "$snapshot_dir/backup.tar.gz" | awk '{ print $1 }')"
+}
+
+restore_backup() {
+    local snapshot_name=$1
+    local destination=$2
+    local archive="$BACKUP_ROOT/$snapshot_name/backup.tar.gz"
+
+    [[ -f "$archive" ]] || {
+        printf 'Error: snapshot %s does not exist.\n' "$snapshot_name" >&2
+        exit 1
+    }
+
+    mkdir -p "$destination"
+    printf 'Restoring %s into %s...\n' "$snapshot_name" "$destination"
+    tar -xzf "$archive" -C "$destination"
+    printf 'Restore completed.\n'
+}
+
+require_command tar
+require_command find
+
+case "${1:-}" in
+    --help|-h|'')
+        usage
+        ;;
+    --list)
+        list_snapshots
+        ;;
+    --restore)
+        [[ $# -eq 3 ]] || { usage >&2; exit 1; }
+        restore_backup "$2" "$3"
+        ;;
+    -*)
+        usage >&2
+        exit 1
+        ;;
+    *)
+        [[ $# -eq 1 ]] || { usage >&2; exit 1; }
+        create_backup "$1"
+        ;;
+esac

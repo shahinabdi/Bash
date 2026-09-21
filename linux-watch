@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+set -u
+
+INTERVAL=2
+ONCE=false
+
+usage() {
+    cat <<'EOF'
+Usage: linux-watch [--once] [--interval seconds]
+
+Show a small Linux system dashboard. Press Ctrl+C to stop live mode.
+EOF
+}
+
+bar() {
+    local percent=$1
+    local width=20
+    local filled=$((percent * width / 100))
+    local empty=$((width - filled))
+
+    printf '%*s' "$filled" '' | tr ' ' '#'
+    printf '%*s' "$empty" '' | tr ' ' '.'
+}
+
+cpu_usage() {
+    local first_total first_idle second_total second_idle total_delta idle_delta
+    read -r _ user nice system idle _ _ _ _ _ _ < /proc/stat
+    first_total=$((user + nice + system + idle))
+    first_idle=$idle
+    sleep 0.2
+    read -r _ user nice system idle _ _ _ _ _ _ < /proc/stat
+    second_total=$((user + nice + system + idle))
+    second_idle=$idle
+    total_delta=$((second_total - first_total))
+    idle_delta=$((second_idle - first_idle))
+    ((total_delta > 0)) && printf '%s' "$((100 * (total_delta - idle_delta) / total_delta))" || printf '0'
+}
+
+memory_usage() {
+    awk '/MemTotal:/ { total = $2 } /MemAvailable:/ { available = $2 } END { printf "%d %d", (total - available) / 1024 / 1024, total / 1024 / 1024 }' /proc/meminfo
+}
+
+print_dashboard() {
+    local cpu memory_used memory_total disk_used load_average
+
+    read -r memory_used memory_total <<<"$(memory_usage)"
+    cpu=$(cpu_usage)
+    disk_used=$(df -P / | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')
+    load_average=$(awk '{ print $1, $2, $3 }' /proc/loadavg)
+
+    printf '=== LINUX WATCH ===\n\n'
+    printf 'HOST\n'
+    printf 'Hostname       %s\n' "$(hostname)"
+    printf 'Kernel         %s\n' "$(uname -r)"
+    printf 'Uptime         %s\n' "$(uptime -p)"
+    printf 'Load           %s\n\n' "$load_average"
+
+    printf 'CPU\n'
+    printf 'Usage          [%s] %s%%\n\n' "$(bar "$cpu")" "$cpu"
+
+    printf 'MEMORY\n'
+    printf 'Used           %s GB / %s GB\n' "$memory_used" "$memory_total"
+    printf '               [%s] %s%%\n\n' "$(bar "$((100 * memory_used / memory_total))")" "$((100 * memory_used / memory_total))"
+
+    printf 'DISK\n'
+    printf '/              [%s] %s%%\n\n' "$(bar "$disk_used")" "$disk_used"
+
+    printf 'PROCESSES\n'
+    printf '%-8s %-6s %-6s %s\n' PID CPU MEM COMMAND
+    ps -eo pid=,pcpu=,pmem=,comm= --sort=-pcpu | head -n 6
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --once)
+            ONCE=true
+            shift
+            ;;
+        --interval)
+            [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { printf 'Error: interval must be a positive integer.\n' >&2; exit 1; }
+            INTERVAL=$2
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+while true; do
+    clear
+    print_dashboard
+    "$ONCE" && break
+    printf '\nRefreshing every %s seconds. Press Ctrl+C to stop.\n' "$INTERVAL"
+    sleep "$INTERVAL"
+done
